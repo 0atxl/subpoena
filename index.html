@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+    <title>Subpoena — GitHub Rap Sheet</title>
+    <meta property="og:title" content="Subpoena — GitHub Rap Sheet" />
+    <meta
+      property="og:description"
+      content="Courtroom noir GitHub intake form and rap sheet."
+    />
+    <meta property="og:type" content="website" />
+    <meta property="og:image" content="/og-default.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="675" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:image" content="/og-default.png" />
+    <link rel="icon" href="data:," />
+    <script>
+      (function () {
+        var og = document.querySelector('meta[property="og:image"]');
+        var tw = document.querySelector('meta[name="twitter:image"]');
+        var cur = og && og.getAttribute('content');
+        if (cur && cur.charAt(0) === '/') {
+          var abs = new URL(cur, window.location.origin).href;
+          og.setAttribute('content', abs);
+          if (tw) tw.setAttribute('content', abs);
+        }
+      })();
+    </script>
+    <link rel="stylesheet" href="/src/ui/styles.css" />
+  </head>
+  <body>
+    <main class="wrap" id="wrap">
+      <section class="sheet" id="sheet" aria-label="Booking form">
+        <canvas
+          class="streak"
+          id="streak-canvas"
+          width="48"
+          height="760"
+          aria-hidden="true"
+        ></canvas>
+        <i class="hole" style="top: 34px" aria-hidden="true"></i>
+        <i class="hole" style="top: 62px" aria-hidden="true"></i>
+        <div class="formno">FORM 14-B</div>
+        <h1>SUBPOENA — INTAKE</h1>
+
+        <div class="row c3">
+          <div class="f"><b>CASE NO.</b><span id="caseno">—</span></div>
+          <div class="f"><b>DATE:</b><span id="date">—</span></div>
+          <div class="f"><b>OFFICER:</b><span id="officer">—</span></div>
+        </div>
+
+        <form class="handle" id="form" novalidate>
+          <label for="h">SUSPECT HANDLE:</label>
+          <input
+            id="h"
+            name="u"
+            autocomplete="off"
+            spellcheck="false"
+            maxlength="44"
+            placeholder="github-username"
+            aria-invalid="false"
+            aria-describedby="form-notice"
+          />
+          <button type="submit" id="book-btn">BOOK</button>
+          <div class="strip-case" id="strip-case" hidden>
+            <b>CASE NO.</b>
+            <span id="strip-caseno">—</span>
+          </div>
+        </form>
+
+        <p class="form-notice" id="form-notice" role="status" aria-live="polite"></p>
+
+        <div class="card-frame" id="card-frame">
+          <canvas
+            id="card-canvas"
+            width="1200"
+            height="675"
+            aria-label="Subpoena rap sheet card"
+          ></canvas>
+          <div class="shutter-flash" id="shutter-flash" aria-hidden="true"></div>
+        </div>
+        <p class="tap-hint" id="tap-hint" hidden>TAP TO ENLARGE</p>
+      </section>
+
+      <aside class="rail" aria-label="Dossier actions">
+        <div class="tape">
+          <h3>KNOWN OFFENDERS</h3>
+          <button type="button" data-u="torvalds">torvalds</button>
+          <button type="button" data-u="sindresorhus">sindresorhus</button>
+          <button type="button" data-u="gaearon">gaearon</button>
+          <button type="button" data-u="octocat">octocat</button>
+        </div>
+
+        <div class="sound-wrap">
+          <button
+            type="button"
+            class="sound-btn"
+            id="sound-toggle"
+            aria-pressed="false"
+          >
+            SOUND: OFF
+          </button>
+        </div>
+
+        <div class="slips">
+          <button type="button" id="btn-download" style="--r: -1.4deg" disabled>
+            DOWNLOAD PNG
+          </button>
+          <button type="button" id="btn-copy-image" style="--r: 1.1deg" disabled>
+            COPY IMAGE
+          </button>
+          <button type="button" id="btn-copy-link" style="--r: -0.9deg" disabled>
+            COPY LINK
+          </button>
+          <button type="button" id="btn-copy-x" style="--r: 1.3deg" disabled>
+            COPY X POST
+          </button>
+          <button type="button" id="btn-copy-readme" style="--r: -1.1deg" disabled>
+            COPY README LINE
+          </button>
+        </div>
+
+        <p
+          class="action-status"
+          id="action-status"
+          role="status"
+          aria-live="polite"
+        ></p>
+      </aside>
+    </main>
+
+    <footer class="page-footer" id="page-footer">
+      Remove a handle:
+      <a id="optout-contact" href="mailto:hello@atulk.me">hello@atulk.me</a>
+    </footer>
+
+    <div
+      class="lightbox"
+      id="lightbox"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Enlarged subpoena rap sheet"
+      hidden
+    >
+      <div class="lightbox-bar">
+        <button type="button" class="close-slip" id="lightbox-close">
+          CLOSE
+        </button>
+      </div>
+      <div class="lightbox-scroll">
+        <img id="lightbox-img" alt="Full-size subpoena rap sheet card" />
+      </div>
+      <p class="lightbox-hint" id="lightbox-hint">DRAG TO PAN</p>
+    </div>
+
+    <script type="module" src="/src/ui/app.ts"></script>
+  </body>
+</html>
