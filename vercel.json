@@ -1,0 +1,37 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "functions": {
+    "api/card.ts": {
+      "maxDuration": 10,
+      "includeFiles": "public/**",
+      "excludeFiles": "{dev/**,tests/**,assets/**,**/*.test.ts}"
+    },
+    "api/gh.ts": {
+      "maxDuration": 10,
+      "excludeFiles": "{dev/**,tests/**,assets/**,**/*.test.ts}"
+    },
+    "api/health.ts": {
+      "maxDuration": 5,
+      "includeFiles": "public/fonts/**",
+      "excludeFiles": "{dev/**,tests/**,assets/**,**/*.test.ts}"
+    },
+    "api/page.ts": {
+      "maxDuration": 5,
+      "includeFiles": "index.html",
+      "excludeFiles": "{dev/**,tests/**,assets/**,**/*.test.ts}"
+    }
+  },
+  "routes": [
+    {
+      "src": "^/api/(.*)$",
+      "dest": "/api/$1"
+    },
+    {
+      "src": "^/$",
+      "dest": "/api/page"
+    },
+    {
+      "handle": "filesystem"
+    }
+  ]
+}
