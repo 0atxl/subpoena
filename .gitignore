@@ -1,0 +1,9 @@
+node_modules/
+dist/
+dev/
+PLAN.md
+prototype.html
+.vercel/
+*.zip
+.env*
+.vercel
