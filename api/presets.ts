@@ -13,7 +13,9 @@ export interface GitHubRepo {
   name: string;
   full_name: string;
   fork: boolean;
+  archived?: boolean;
   stargazers_count: number;
+  language?: string | null;
   license: { spdx_id?: string | null; name?: string | null } | null;
   created_at: string;
   pushed_at: string;

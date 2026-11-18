@@ -25,6 +25,7 @@ function localApiPlugin(): Plugin {
         const rawUrl = req.url ?? '';
         if (
           !rawUrl.startsWith('/api/gh') &&
+          !rawUrl.startsWith('/api/detail') &&
           !rawUrl.startsWith('/api/card') &&
           !rawUrl.startsWith('/api/health') &&
           !rawUrl.startsWith('/api/page')
@@ -53,6 +54,9 @@ function localApiPlugin(): Plugin {
           if (rawUrl.startsWith('/api/gh')) {
             const mod = await server.ssrLoadModule('/api/gh.ts');
             webRes = await mod.handleRequest(webReq);
+          } else if (rawUrl.startsWith('/api/detail')) {
+            const mod = await server.ssrLoadModule('/api/detail.ts');
+            webRes = await mod.handleDetailRequest(webReq);
           } else if (rawUrl.startsWith('/api/card')) {
             const mod = await server.ssrLoadModule('/api/card.ts');
             webRes = await mod.handleCardRequest(webReq);

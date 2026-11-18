@@ -761,9 +761,10 @@ describe('build and bundle isolation', () => {
       const script = `
         const page = await import('./api/page.js');
         const gh = await import('./api/gh.js');
+        const detail = await import('./api/detail.js');
         const card = await import('./api/card.js');
         const health = await import('./api/health.js');
-        if (typeof page.default !== 'function' || typeof gh.default !== 'function' || typeof card.default !== 'function' || typeof health.default !== 'function') {
+        if (typeof page.default !== 'function' || typeof gh.default !== 'function' || typeof detail.default !== 'function' || typeof card.default !== 'function' || typeof health.default !== 'function') {
           throw new Error('Missing default handler export');
         }
         const res = page.handlePageRequest(new Request('https://subpoena.vercel.app/?u=torvalds'));

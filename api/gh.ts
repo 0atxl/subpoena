@@ -43,6 +43,15 @@ export function clearBundleCache(): void {
   bundleCache.clear();
 }
 
+export function getCachedBundle(rawHandle: string): FetchBundleResponse | null {
+  const cacheKey = cleanGitHubHandle(rawHandle).toLowerCase();
+  const cached = bundleCache.get(cacheKey);
+  if (cached && Date.now() < cached.expiresAt) {
+    return cached.result;
+  }
+  return null;
+}
+
 export function resolveGitHubToken(
   tokenOverride?: string,
   env: NodeJS.ProcessEnv = process.env,
@@ -88,7 +97,7 @@ function isPresetHandle(handle: string): handle is PresetHandle {
   return Object.prototype.hasOwnProperty.call(PRESETS, handle.toLowerCase());
 }
 
-function getPreset(handle: string): GitHubBundle | null {
+export function getPreset(handle: string): GitHubBundle | null {
   const key = handle.toLowerCase();
   if (!isPresetHandle(key)) return null;
   const src = PRESETS[key];
@@ -149,7 +158,11 @@ function slimRepo(raw: Record<string, unknown>): GitHubRepo {
     name: String(raw.name ?? ''),
     full_name: String(raw.full_name ?? ''),
     fork: Boolean(raw.fork),
+    ...(raw.archived !== undefined ? { archived: Boolean(raw.archived) } : {}),
     stargazers_count: Number(raw.stargazers_count ?? 0),
+    ...(raw.language !== undefined
+      ? { language: raw.language == null ? null : String(raw.language) }
+      : {}),
     license: lic
       ? {
           spdx_id: lic.spdx_id == null ? null : String(lic.spdx_id),
@@ -374,7 +387,7 @@ export async function fetchGitHubBundle(
     },
   };
 
-  if (useMemoryCache && userRes.ok) {
+  if (userRes.ok) {
     const ttlMs = isPartial ? 15_000 : 60_000;
     bundleCache.set(cacheKey, {
       expiresAt: Date.now() + ttlMs,

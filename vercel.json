@@ -6,6 +6,10 @@
       "includeFiles": "public/**",
       "excludeFiles": "{dev/**,tests/**,assets/**,**/*.test.ts}"
     },
+    "api/detail.ts": {
+      "maxDuration": 10,
+      "excludeFiles": "{dev/**,tests/**,assets/**,**/*.test.ts}"
+    },
     "api/gh.ts": {
       "maxDuration": 10,
       "excludeFiles": "{dev/**,tests/**,assets/**,**/*.test.ts}"
