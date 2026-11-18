@@ -591,9 +591,6 @@ async function bookHandle(rawInput: string, updateUrl = true): Promise<void> {
   }
 
   updateOgTags(verdict.verdict === 'RECORD SEALED' ? null : verdict.handle);
-  if (verdict.verdict !== 'RECORD SEALED') {
-    prewarmCardPreview(verdict.handle);
-  }
   if (updateUrl) {
     const nextUrl = new URL(window.location.href);
     nextUrl.search = '';
@@ -700,6 +697,7 @@ btnExhibits.addEventListener('click', async () => {
       mountEl: exhibitsRootEl,
       verdict,
       repos: currentBundle?.repos,
+      bundle: currentBundle ?? undefined,
       getPresetBundle: (h) => makeFallbackBundle(h),
       openLightboxWithCanvas,
       setActionStatus,
@@ -741,6 +739,12 @@ btnCopyImage.addEventListener('click', async () => {
     setActionStatus('Copied card image to clipboard.');
   } catch {
     setActionStatus('Image copy unavailable in this browser.');
+  }
+});
+
+btnCopyLink.addEventListener('pointerenter', () => {
+  if (currentVerdict && currentVerdict.verdict !== 'RECORD SEALED') {
+    prewarmCardPreview(currentVerdict.handle);
   }
 });
 

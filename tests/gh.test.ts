@@ -239,6 +239,116 @@ describe('api/gh proxy', () => {
     expect(rEmpty.body.missing.commits).toBe('empty');
   });
 
+  it('recovers recent commits from Core REST /repos/{repo}/commits when /search/commits returns 403 and does not cache transient 403 failures', async () => {
+    const recoveredFetch: FetchLike = async (input) => {
+      const url = String(input);
+      if (url.endsWith('/users/0atxl')) {
+        return jsonResponse({
+          login: '0atxl',
+          id: 901,
+          avatar_url: 'https://avatars.githubusercontent.com/u/901?v=4',
+          name: 'Atul',
+          type: 'User',
+          public_repos: 1,
+          followers: 5,
+          created_at: '2022-01-01T00:00:00Z',
+        });
+      }
+      if (url.includes('/users/0atxl/repos?')) {
+        return jsonResponse([
+          {
+            name: 'subpoena',
+            full_name: '0atxl/subpoena',
+            fork: false,
+            stargazers_count: 10,
+            language: 'TypeScript',
+            license: { spdx_id: 'MIT', name: 'MIT License' },
+            created_at: '2026-01-01T00:00:00Z',
+            pushed_at: '2026-11-18T12:00:00Z',
+          },
+        ]);
+      }
+      if (url.includes('/events/public?')) {
+        return jsonResponse([
+          {
+            id: '10',
+            type: 'PushEvent',
+            created_at: '2026-11-18T12:00:00Z',
+            repo: { name: '0atxl/subpoena' },
+            payload: { ref: 'refs/heads/master' },
+          },
+        ]);
+      }
+      if (url.includes('/search/commits?')) {
+        return jsonResponse({ message: 'secondary rate limit' }, 403);
+      }
+      if (url.includes('/repos/0atxl/subpoena/commits?author=0atxl')) {
+        return jsonResponse([
+          {
+            sha: 'abc1234',
+            commit: {
+              message: 'feat: recover commits',
+              author: { date: '2026-11-18T18:41:03+05:30' },
+            },
+          },
+        ]);
+      }
+      return jsonResponse([], 404);
+    };
+
+    const res = await fetchGitHubBundle('0atxl', { fetchImpl: recoveredFetch });
+    expect(res.status).toBe(200);
+    expect(res.body.missing.commits).toBeUndefined();
+    expect(res.body.commits?.items).toHaveLength(1);
+    expect(res.body.commits?.items[0]?.sha).toBe('abc1234');
+    expect(res.body.commits?.incomplete_results).toBe(true);
+
+    // Ensure transient 403 (with no fallback candidates) does not stay pinned in bundleCache
+    let attempt = 0;
+    const retryFetch: FetchLike = async (input) => {
+      const url = String(input);
+      if (url.endsWith('/users/retrydev')) {
+        return jsonResponse({
+          login: 'retrydev',
+          id: 902,
+          avatar_url: 'https://avatars.githubusercontent.com/u/902?v=4',
+          name: 'Retry Dev',
+          type: 'User',
+          public_repos: 0,
+          followers: 1,
+          created_at: '2024-01-01T00:00:00Z',
+        });
+      }
+      if (url.includes('/repos?')) return jsonResponse([]);
+      if (url.includes('/events/public?')) return jsonResponse([]);
+      if (url.includes('/search/commits?')) {
+        attempt++;
+        if (attempt === 1) return jsonResponse({ message: 'secondary limit' }, 403);
+        return jsonResponse({
+          total_count: 1,
+          incomplete_results: false,
+          items: [
+            {
+              sha: 'def5678',
+              commit: {
+                message: 'fix: retry ok',
+                author: { date: '2026-11-18T10:00:00Z' },
+              },
+              repository: { full_name: 'retrydev/app' },
+            },
+          ],
+        });
+      }
+      return jsonResponse([], 404);
+    };
+
+    const first = await fetchGitHubBundle('retrydev', { fetchImpl: retryFetch });
+    expect(first.body.missing.commits).toBe(403);
+    const second = await fetchGitHubBundle('retrydev', { fetchImpl: retryFetch });
+    expect(second.body.missing.commits).toBeUndefined();
+    expect(second.body.commits?.items[0]?.sha).toBe('def5678');
+  });
+
   it('handles 404 users cleanly without throwing', async () => {
     const mock404: FetchLike = async () => jsonResponse({ message: 'Not Found' }, 404);
     const res = await handleRequest(

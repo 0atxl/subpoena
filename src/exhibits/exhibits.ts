@@ -22,6 +22,7 @@ export interface ExhibitsOpenOptions {
   mountEl: HTMLElement;
   verdict: VerdictReport;
   repos?: readonly ExhibitRepoInfo[];
+  bundle?: BundleLike;
   getPresetBundle: (handle: string) => BundleLike | null;
   openLightboxWithCanvas: (
     sourceCanvas: HTMLCanvasElement,
@@ -205,10 +206,44 @@ export async function openExhibitsCaseFile(
   if (seq !== activeOpenSeq) return { ok: false };
 
   const baseDossier = result.dossier;
-  const dossier: ExhibitDossier =
+  let dossier: ExhibitDossier =
     opts.repos && !baseDossier.repos
       ? { ...baseDossier, repos: opts.repos }
       : baseDossier;
+  if (
+    !dossier.punchCard &&
+    opts.bundle?.commits &&
+    opts.bundle.commits.items.length > 0
+  ) {
+    const recoveredInput = detailInputFromBundle(opts.bundle, null);
+    if (recoveredInput) {
+      const recovered = buildDetailReport(recoveredInput);
+      const filteredNotes = dossier.sample.notes.filter(
+        (n) => !/No commit sample available/i.test(n),
+      );
+      if (
+        opts.bundle.commits.incomplete_results &&
+        !filteredNotes.some((n) => /incomplete results/i.test(n))
+      ) {
+        filteredNotes.unshift(
+          'GitHub search reported incomplete results; counts are of recent commits found.',
+        );
+      }
+      dossier = {
+        ...dossier,
+        punchCard: recovered.punchCard,
+        radar: recovered.radar,
+        sample: {
+          ...dossier.sample,
+          commits: recovered.sample.commits,
+          searchIncomplete:
+            dossier.sample.searchIncomplete ||
+            recovered.sample.searchIncomplete,
+          notes: filteredNotes,
+        },
+      };
+    }
+  }
   let activeId: ExhibitId = 'A';
 
   mountEl.innerHTML = '';

@@ -4,6 +4,7 @@ import { isOptedOut, makeSealedBundle } from '../src/optout.js';
 import {
   PRESETS,
   type GitHubBundle,
+  type GitHubCommitSearchItem,
   type GitHubCommitSearchResult,
   type GitHubEvent,
   type GitHubRepo,
@@ -211,6 +212,93 @@ function slimCommitItem(raw: Record<string, unknown>) {
   };
 }
 
+const REPO_FULL_NAME_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+
+async function fetchCommitsFromReposFallback(
+  handle: string,
+  repos: readonly GitHubRepo[],
+  events: readonly GitHubEvent[],
+  headers: Record<string, string>,
+  fetchImpl: FetchLike,
+): Promise<GitHubCommitSearchResult | null> {
+  const candidates: string[] = [];
+  const seenRepos = new Set<string>();
+  const addCandidate = (fullName: string | undefined) => {
+    if (!fullName || seenRepos.has(fullName) || !REPO_FULL_NAME_RE.test(fullName)) {
+      return;
+    }
+    seenRepos.add(fullName);
+    candidates.push(fullName);
+  };
+
+  for (const ev of events) {
+    if (ev.type === 'PushEvent') {
+      addCandidate(ev.repo?.name);
+      if (candidates.length >= 4) break;
+    }
+  }
+  if (candidates.length < 4) {
+    for (const r of repos) {
+      if (!r.fork) {
+        addCandidate(r.full_name);
+        if (candidates.length >= 4) break;
+      }
+    }
+  }
+  if (candidates.length < 4) {
+    for (const r of repos) {
+      addCandidate(r.full_name);
+      if (candidates.length >= 4) break;
+    }
+  }
+
+  if (candidates.length === 0) return null;
+
+  const encodedAuthor = encodeURIComponent(handle);
+  const responses = await Promise.all(
+    candidates.map(async (fullName) => {
+      const url = `${GITHUB_API_BASE}/repos/${fullName}/commits?author=${encodedAuthor}&per_page=35`;
+      const res = await safeFetchGitHub<Record<string, unknown>[]>(
+        url,
+        headers,
+        fetchImpl,
+      );
+      return { fullName, res };
+    }),
+  );
+
+  const bySha = new Map<string, GitHubCommitSearchItem>();
+  for (const { fullName, res } of responses) {
+    if (!res.ok || !Array.isArray(res.data)) continue;
+    for (const raw of res.data) {
+      const item = slimCommitItem(raw);
+      if (!item.sha || !item.commit.author.date) continue;
+      if (!item.repository) {
+        item.repository = { full_name: fullName };
+      }
+      if (!bySha.has(item.sha)) {
+        bySha.set(item.sha, item);
+      }
+    }
+  }
+
+  if (bySha.size === 0) return null;
+
+  const items = [...bySha.values()]
+    .sort(
+      (a, b) =>
+        (Date.parse(b.commit.author.date) || 0) -
+        (Date.parse(a.commit.author.date) || 0),
+    )
+    .slice(0, 100);
+
+  return {
+    total_count: items.length,
+    incomplete_results: true,
+    items,
+  };
+}
+
 export function buildCommitSearchQuery(
   handle: string,
   now: Date = new Date(),
@@ -309,10 +397,39 @@ export async function fetchGitHubBundle(
     missing.events = toMissingReason(eventsRes.status);
   }
 
+  // Parse repos and events first so repo/push-event history is available for commit fallback
+  const user = userRes.ok && userRes.data ? slimUser(userRes.data) : null;
+  const repos =
+    reposRes.ok && Array.isArray(reposRes.data)
+      ? reposRes.data.map(slimRepo)
+      : [];
+  const events =
+    eventsRes.ok && Array.isArray(eventsRes.data)
+      ? eventsRes.data.map(slimEvent)
+      : [];
+
   let commits: GitHubCommitSearchResult | null = null;
   if (!isOrganization && commitsRes) {
     if (!commitsRes.ok) {
-      missing.commits = toMissingReason(commitsRes.status);
+      const canFallbackToRepoCommits =
+        userRes.ok &&
+        (commitsRes.status === 403 ||
+          commitsRes.status === 429 ||
+          commitsRes.status >= 500);
+      const fallbackCommits = canFallbackToRepoCommits
+        ? await fetchCommitsFromReposFallback(
+            handle,
+            repos,
+            events,
+            headers,
+            fetchImpl,
+          )
+        : null;
+      if (fallbackCommits && fallbackCommits.items.length > 0) {
+        commits = fallbackCommits;
+      } else {
+        missing.commits = toMissingReason(commitsRes.status);
+      }
     } else if (commitsRes.data) {
       const rawItems = Array.isArray(commitsRes.data.items)
         ? (commitsRes.data.items as Record<string, unknown>[])
@@ -351,16 +468,6 @@ export async function fetchGitHubBundle(
     }
   }
 
-  const user = userRes.ok && userRes.data ? slimUser(userRes.data) : null;
-  const repos =
-    reposRes.ok && Array.isArray(reposRes.data)
-      ? reposRes.data.map(slimRepo)
-      : [];
-  const events =
-    eventsRes.ok && Array.isArray(eventsRes.data)
-      ? eventsRes.data.map(slimEvent)
-      : [];
-
   const isPartial = Object.keys(missing).length > 0;
   let responseStatus = 200;
   let cacheControl = isPartial ? CACHE_CONTROL_PARTIAL : CACHE_CONTROL_COMPLETE;
@@ -387,7 +494,11 @@ export async function fetchGitHubBundle(
     },
   };
 
-  if (userRes.ok) {
+  const hasTransient403 =
+    missing.commits === 403 ||
+    missing.repos === 403 ||
+    missing.events === 403;
+  if (userRes.ok && !hasTransient403) {
     const ttlMs = isPartial ? 15_000 : 60_000;
     bundleCache.set(cacheKey, {
       expiresAt: Date.now() + ttlMs,
