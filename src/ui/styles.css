@@ -82,7 +82,10 @@ body::before {
   background: var(--paper);
   padding: 24px 24px 22px 60px;
   transform: rotate(-0.4deg);
-  box-shadow: 5px 6px 0 rgba(0, 0, 0, 0.45);
+  box-shadow:
+    5px 6px 0 rgba(0, 0, 0, 0.45),
+    inset 0 0 0 1px rgba(23, 21, 15, 0.08),
+    inset 0 0 10px rgba(23, 21, 15, 0.06);
   overflow: hidden;
   min-width: 0;
 }
@@ -93,8 +96,8 @@ body::before {
   inset: 0;
   pointer-events: none;
   mix-blend-mode: multiply;
-  opacity: 0.52;
-  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='400'%3E%3Cfilter id='n'%3E%3CfeTurbulence baseFrequency='.7' numOctaves='3'/%3E%3CfeColorMatrix values='0 0 0 0 .3 0 0 0 0 .22 0 0 0 0 .1 0 0 0 .9 -.25'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  opacity: 0.16;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='320' height='320'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.035 .16' numOctaves='2'/%3E%3CfeColorMatrix values='0 0 0 0 .35 0 0 0 0 .28 0 0 0 0 .18 0 0 0 .32 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
 }
 
 .streak {
@@ -113,7 +116,9 @@ body::before {
   height: 14px;
   clip-path: circle(50%);
   background: var(--desk);
-  box-shadow: inset 1px 2px 0 rgba(0, 0, 0, 0.65);
+  box-shadow:
+    inset 1px 2px 0 rgba(0, 0, 0, 0.65),
+    0 0 0 1px rgba(243, 239, 227, 0.58);
 }
 
 .formno {
@@ -126,7 +131,7 @@ body::before {
   font-size: 13px;
   padding: 2px 8px;
   transform: rotate(1.5deg);
-  opacity: 0.88;
+  opacity: 0.7;
 }
 
 h1 {
@@ -253,11 +258,15 @@ h1 {
 
 /* Collapse intake header into a slim strip after booking so the 1200x675 card renders large on desktop */
 .sheet.is-booked {
-  padding: 12px 14px 14px;
+  padding: 12px 14px 14px 32px;
   transform: none;
 }
 
-.sheet.is-booked > .streak,
+.sheet.is-booked > .streak {
+  width: 28px;
+  opacity: 0.72;
+}
+
 .sheet.is-booked > .hole,
 .sheet.is-booked > .formno,
 .sheet.is-booked > h1,
@@ -348,7 +357,8 @@ h1 {
   display: none !important;
 }
 
-#card-canvas {
+#card-canvas,
+.card-canvas {
   display: block;
   width: 100%;
   height: auto;
@@ -505,6 +515,166 @@ h1 {
   display: none;
 }
 
+.slips button.slip-exhibits {
+  background: var(--paper);
+  border-width: 1.5px;
+}
+
+.slips button.slip-exhibits.is-sealed {
+  color: var(--red);
+  border-color: var(--red);
+  opacity: 0.88;
+}
+
+.exhibits-root {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 2px dashed rgba(23, 21, 15, 0.35);
+}
+
+.exhibits-root[hidden] {
+  display: none;
+}
+
+.exhibits-casefile {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.exhibits-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+  font: 700 12px/1.2 "Courier Prime", monospace;
+  color: var(--ink);
+}
+
+.exhibits-close-btn {
+  background: var(--print);
+  color: var(--ink);
+  border: 1.5px solid var(--ink);
+  padding: 4px 10px;
+  min-height: 28px;
+  font: 700 11px "Courier Prime", monospace;
+  cursor: pointer;
+}
+
+.exhibits-close-btn:hover {
+  background: var(--tape);
+}
+
+.exhibit-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: flex-end;
+  padding: 0 4px;
+}
+
+.exhibit-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font: 700 11.5px/1.1 "Courier Prime", monospace;
+  background: var(--tape);
+  color: var(--ink);
+  border: 1.5px solid var(--ink);
+  border-bottom: 0;
+  border-radius: 4px 4px 0 0;
+  padding: 7px 11px 6px;
+  cursor: pointer;
+  opacity: 0.78;
+  position: relative;
+  top: 2px;
+}
+
+.exhibit-tab:hover:not(.is-active) {
+  opacity: 0.94;
+}
+
+.exhibit-tab.is-active {
+  background: var(--paper);
+  opacity: 1;
+  border-width: 2px;
+  padding-bottom: 8px;
+  border-bottom: 2px solid var(--paper);
+  z-index: 2;
+}
+
+.exhibit-tab.is-withheld {
+  background: #ccc6b7;
+  color: #5a564b;
+  border-color: #6f6a5c;
+  opacity: 0.65;
+}
+
+.exhibit-tab.is-withheld.is-active {
+  background: #dbd5c5;
+  color: #3a372f;
+  opacity: 0.94;
+  border-bottom: 2px solid var(--paper);
+}
+
+.tab-withheld-tag {
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--red);
+  border: 1px solid currentColor;
+  padding: 1px 4px;
+  letter-spacing: 0.04em;
+  line-height: 1;
+}
+
+.exhibit-tab:focus-visible,
+.exhibits-close-btn:focus-visible,
+.exhibit-download-slip:focus-visible,
+.exhibit-frame:focus-visible {
+  outline: 2px solid var(--red);
+  outline-offset: 2px;
+}
+
+.exhibit-frame {
+  position: relative;
+  border: 2px solid var(--ink);
+  background: var(--paper);
+  box-shadow: 3px 4px 0 rgba(0, 0, 0, 0.25);
+  cursor: zoom-in;
+  line-height: 0;
+}
+
+.exhibit-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.exhibit-meta {
+  font: 700 12px/1.3 "Courier Prime", monospace;
+  color: var(--ink);
+}
+
+.exhibit-download-slip {
+  font: 700 12px "Courier Prime", monospace;
+  background: var(--tape);
+  color: var(--ink);
+  border: 1px solid var(--ink);
+  min-height: 34px;
+  padding: 7px 12px;
+  cursor: pointer;
+  box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.4);
+  transform: rotate(-0.6deg);
+}
+
+.exhibit-download-slip:hover {
+  background: var(--print);
+}
+
 .action-status {
   margin: 0;
   min-height: 22px;
@@ -618,7 +788,11 @@ h1 {
     transform: none;
   }
   .sheet.is-booked {
-    padding: 8px 8px 10px;
+    padding: 8px 8px 10px 18px;
+  }
+  .sheet.is-booked > .streak {
+    width: 16px;
+    opacity: 0.65;
   }
   .sheet.is-booked .handle {
     flex-wrap: wrap;
@@ -714,6 +888,16 @@ h1 {
   }
   .sound-wrap {
     order: 4;
+  }
+  .exhibit-tabs {
+    padding: 0;
+  }
+  .exhibit-tab {
+    font-size: 10px;
+    padding: 5px 7px;
+  }
+  .exhibit-tap-hint {
+    display: block;
   }
 }
 

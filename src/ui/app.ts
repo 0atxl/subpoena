@@ -48,6 +48,30 @@ const sleep = (ms: number): Promise<void> =>
     ? Promise.resolve()
     : new Promise((resolve) => setTimeout(resolve, ms));
 
+const waitForIdleAfterAnimationStart = (): Promise<void> =>
+  new Promise((resolve) => {
+    const startIdle = () => {
+      const ric = (
+        window as unknown as {
+          requestIdleCallback?: (
+            cb: () => void,
+            opts?: { timeout: number },
+          ) => number;
+        }
+      ).requestIdleCallback;
+      if (typeof ric === 'function') {
+        ric(() => resolve(), { timeout: 100 });
+      } else {
+        setTimeout(resolve, 12);
+      }
+    };
+    if (typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(() => setTimeout(startIdle, 24));
+    } else {
+      setTimeout(startIdle, 24);
+    }
+  });
+
 function drawSheetTonerStreak(): void {
   const canvas = document.getElementById(
     'streak-canvas',
@@ -62,21 +86,44 @@ function drawSheetTonerStreak(): void {
   const data = img.data;
   const rng = createRng(0x14b014b0);
 
+  const gutterW = Math.min(w, 38);
+  const bandOpacities = new Float32Array(gutterW);
+  let bx = 0;
+  while (bx < gutterW) {
+    const bw = 1 + Math.floor(rng() * 3);
+    const op = 0.08 + rng() * 0.22;
+    for (let j = 0; j < bw && bx + j < gutterW; j++) {
+      bandOpacities[bx + j] = op;
+    }
+    bx += bw + Math.floor(rng() * 2);
+  }
+
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
-      const falloff = Math.max(0, 1 - x / w);
-      const n = rng();
       const k = (y * w + x) * 4;
-      if (falloff * 1.15 + (n - 0.5) * 0.85 > 0.48) {
-        data[k] = 23;
-        data[k + 1] = 21;
-        data[k + 2] = 15;
-        data[k + 3] = Math.min(255, Math.floor(falloff * 240));
-      } else {
+      data[k] = 23;
+      data[k + 1] = 21;
+      data[k + 2] = 15;
+      if (x >= gutterW) {
         data[k + 3] = 0;
+        continue;
       }
+      const falloff = Math.pow(1 - x / gutterW, 1.65);
+      const yWave = 0.86 + 0.24 * Math.sin(y * 0.019 + x * 0.4);
+      const band = bandOpacities[x] ?? 0;
+      const alphaFloat = Math.min(0.24, falloff * (0.16 * yWave + band * 0.42));
+      data[k + 3] = Math.round(alphaFloat * 255);
     }
   }
+
+  // Up to 40 subtle dropout specks near the edge
+  for (let i = 0; i < 32; i++) {
+    const sx = 1 + Math.floor(rng() * Math.min(18, gutterW - 2));
+    const sy = 6 + Math.floor(rng() * (h - 12));
+    const k = (sy * w + sx) * 4;
+    data[k + 3] = Math.round((data[k + 3] ?? 0) * 0.45);
+  }
+
   ctx.putImageData(img, 0, 0);
 }
 
@@ -188,14 +235,18 @@ const btnCopyImage = $('btn-copy-image') as HTMLButtonElement;
 const btnCopyLink = $('btn-copy-link') as HTMLButtonElement;
 const btnCopyX = $('btn-copy-x') as HTMLButtonElement;
 const btnCopyReadme = $('btn-copy-readme') as HTMLButtonElement;
+const btnExhibits = $('btn-exhibits') as HTMLButtonElement;
+const exhibitsRootEl = $('exhibits-root');
 
 if (!canCopyImage()) {
   btnCopyImage.hidden = true;
 }
 
 let currentVerdict: VerdictReport | null = null;
+let currentBundle: GitHubBundle | null = null;
 let bookingSeq = 0;
 let lightboxObjectUrl: string | null = null;
+let lightboxReturnFocusEl: HTMLElement | null = null;
 const prewarmedHandles = new Set<string>();
 
 function prewarmCardPreview(handle: string): void {
@@ -215,6 +266,33 @@ function setActionsEnabled(enabled: boolean): void {
   btnCopyLink.disabled = !enabled;
   btnCopyX.disabled = !enabled;
   btnCopyReadme.disabled = !enabled;
+}
+
+function resetExhibitsPanel(): void {
+  exhibitsRootEl.hidden = true;
+  exhibitsRootEl.innerHTML = '';
+}
+
+function updateExhibitsButtonForVerdict(verdict: VerdictReport | null): void {
+  if (!verdict) {
+    btnExhibits.hidden = true;
+    btnExhibits.disabled = true;
+    btnExhibits.classList.remove('is-sealed');
+    btnExhibits.textContent = 'MORE EXHIBITS';
+    return;
+  }
+  btnExhibits.hidden = false;
+  const sealed =
+    verdict.verdict === 'RECORD SEALED' || isOptedOut(verdict.handle);
+  if (sealed) {
+    btnExhibits.disabled = true;
+    btnExhibits.classList.add('is-sealed');
+    btnExhibits.textContent = 'RECORD SEALED';
+  } else {
+    btnExhibits.disabled = false;
+    btnExhibits.classList.remove('is-sealed');
+    btnExhibits.textContent = 'MORE EXHIBITS';
+  }
 }
 
 function setNotice(
@@ -241,35 +319,51 @@ function closeLightbox(restoreFocus = true): void {
     lightboxObjectUrl = null;
   }
   lightboxImg.removeAttribute('src');
-  if (
-    wasOpen &&
-    restoreFocus &&
-    cardFrame.classList.contains('is-interactive')
-  ) {
-    cardFrame.focus();
+  const returnTarget =
+    lightboxReturnFocusEl ??
+    (cardFrame.classList.contains('is-interactive') ? cardFrame : null);
+  lightboxReturnFocusEl = null;
+  if (wasOpen && restoreFocus && returnTarget) {
+    returnTarget.focus();
+  }
+}
+
+async function openLightboxWithCanvas(
+  sourceCanvas: HTMLCanvasElement,
+  altText: string,
+  returnFocusTo?: HTMLElement | null,
+): Promise<void> {
+  try {
+    const blob = await canvasToPngBlob(sourceCanvas);
+    if (lightboxObjectUrl) {
+      URL.revokeObjectURL(lightboxObjectUrl);
+    }
+    lightboxObjectUrl = URL.createObjectURL(blob);
+    lightboxReturnFocusEl = returnFocusTo ?? null;
+    lightboxImg.src = lightboxObjectUrl;
+    lightboxImg.alt = altText;
+    lightboxEl.hidden = false;
+    lightboxCloseBtn.focus();
+  } catch {
+    setActionStatus('Unable to open full-screen view.');
   }
 }
 
 async function openLightbox(): Promise<void> {
   if (!currentVerdict) return;
-  try {
-    const blob = await canvasToPngBlob(cardCanvas);
-    if (lightboxObjectUrl) {
-      URL.revokeObjectURL(lightboxObjectUrl);
-    }
-    lightboxObjectUrl = URL.createObjectURL(blob);
-    lightboxImg.src = lightboxObjectUrl;
-    lightboxImg.alt = `Full-size subpoena rap sheet for @${currentVerdict.handle}`;
-    lightboxEl.hidden = false;
-    lightboxCloseBtn.focus();
-  } catch {
-    setActionStatus('Unable to open full-screen card view.');
-  }
+  await openLightboxWithCanvas(
+    cardCanvas,
+    `Full-size subpoena rap sheet for @${currentVerdict.handle}`,
+    cardFrame,
+  );
 }
 
 function clearCardForError(message: string): void {
   currentVerdict = null;
+  currentBundle = null;
   setActionsEnabled(false);
+  updateExhibitsButtonForVerdict(null);
+  resetExhibitsPanel();
   inputEl.setAttribute('aria-invalid', 'true');
   setNotice(message, true);
   caseEl.textContent = '—';
@@ -337,6 +431,8 @@ async function bookHandle(rawInput: string, updateUrl = true): Promise<void> {
   inputEl.setAttribute('aria-invalid', 'false');
   bookBtn.disabled = true;
   setActionsEnabled(false);
+  updateExhibitsButtonForVerdict(null);
+  resetExhibitsPanel();
   setActionStatus('');
   setNotice(`Pulling rap sheet for @${cleaned}...`);
   triggerShutterFlash();
@@ -425,14 +521,49 @@ async function bookHandle(rawInput: string, updateUrl = true): Promise<void> {
   const avatar = await loadCorsAvatar(bundle.user?.avatar_url);
   if (!isCurrent()) return;
 
+  // Yield until intake typing/shutter animation begins and browser hits an idle slice
+  await waitForIdleAfterAnimationStart();
+  if (!isCurrent()) return;
+
+  const stageCanvas = document.createElement('canvas');
+  stageCanvas.width = CARD_WIDTH;
+  stageCanvas.height = CARD_HEIGHT;
+  const stageCtx = stageCanvas.getContext('2d');
+  if (!stageCtx) return;
+
+  const renderStart = performance.now();
+  await draw(stageCtx, verdict, avatar, {
+    fontLoader: browserFontLoader,
+    yieldBetweenStages: true,
+  });
+  const wallMs = performance.now() - renderStart;
+  if (!isCurrent()) return;
+
+  const stageMetrics = stageCanvas as unknown as {
+    __lastComputeMs?: number;
+    __maxStageMs?: number;
+    __stageTimings?: Array<{ name: string; ms: number }>;
+  };
+  const winMetrics = window as unknown as {
+    __lastRenderMs?: number;
+    __lastRenderWallMs?: number;
+    __maxStageMs?: number;
+    __stageTimings?: Array<{ name: string; ms: number }>;
+  };
+  winMetrics.__lastRenderMs = stageMetrics.__lastComputeMs ?? wallMs;
+  winMetrics.__lastRenderWallMs = wallMs;
+  winMetrics.__maxStageMs = stageMetrics.__maxStageMs ?? wallMs;
+  winMetrics.__stageTimings = stageMetrics.__stageTimings ?? [];
+
   cardCanvas.width = CARD_WIDTH;
   cardCanvas.height = CARD_HEIGHT;
-  await draw(ctx, verdict, avatar, { fontLoader: browserFontLoader });
+  ctx.drawImage(stageCanvas, 0, 0);
   await typingPromise;
 
   if (!isCurrent()) return;
 
   currentVerdict = verdict;
+  currentBundle = bundle;
   wrapEl.classList.add('is-booked');
   sheetEl.classList.add('is-booked');
   stripCaseEl.hidden = false;
@@ -444,6 +575,7 @@ async function bookHandle(rawInput: string, updateUrl = true): Promise<void> {
   tapHintEl.hidden = false;
   bookBtn.disabled = false;
   setActionsEnabled(true);
+  updateExhibitsButtonForVerdict(verdict);
   triggerCardSlam();
 
   if (friendlyNotice) {
@@ -543,6 +675,62 @@ btnDownload.addEventListener('click', async () => {
     setActionStatus(`Downloaded subpoena-${normalizeHandle(currentVerdict.handle)}.png`);
   } catch {
     setActionStatus('PNG export failed.');
+  }
+});
+
+btnExhibits.addEventListener('click', async () => {
+  const verdict = currentVerdict;
+  if (
+    !verdict ||
+    verdict.verdict === 'RECORD SEALED' ||
+    isOptedOut(verdict.handle)
+  ) {
+    updateExhibitsButtonForVerdict(verdict);
+    return;
+  }
+
+  const seqAtClick = bookingSeq;
+  btnExhibits.disabled = true;
+  btnExhibits.textContent = 'RETRIEVING EXHIBITS...';
+
+  try {
+    const mod = await import('../exhibits/exhibits.js');
+    if (bookingSeq !== seqAtClick) return;
+    const outcome = await mod.openExhibitsCaseFile({
+      mountEl: exhibitsRootEl,
+      verdict,
+      repos: currentBundle?.repos,
+      getPresetBundle: (h) => makeFallbackBundle(h),
+      openLightboxWithCanvas,
+      setActionStatus,
+      onSoundTick: () => sfx.tick(),
+    });
+    if (bookingSeq !== seqAtClick) return;
+    if (outcome.statusMessage === 'RECORD SEALED') {
+      updateExhibitsButtonForVerdict({
+        ...verdict,
+        verdict: 'RECORD SEALED',
+      });
+      setNotice('RECORD SEALED', false, true);
+      return;
+    }
+    if (outcome.statusMessage) {
+      setActionStatus(outcome.statusMessage);
+    }
+  } catch {
+    if (bookingSeq !== seqAtClick) return;
+    setActionStatus('Could not load exhibits module.');
+  } finally {
+    if (
+      bookingSeq === seqAtClick &&
+      currentVerdict &&
+      currentVerdict.verdict !== 'RECORD SEALED' &&
+      !isOptedOut(currentVerdict.handle) &&
+      !btnExhibits.classList.contains('is-sealed')
+    ) {
+      btnExhibits.disabled = false;
+      btnExhibits.textContent = 'MORE EXHIBITS';
+    }
   }
 });
 
