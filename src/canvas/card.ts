@@ -1,13 +1,21 @@
 import type { VerdictReport } from '../engine/charges.js';
+import { createRng, hashHandle } from '../engine/hash.js';
 import { getBotAddendum } from '../engine/voice.js';
 import { drawFingerprint } from './fingerprint.js';
 import type { FontLoader } from './fonts.js';
+import {
+  drawHandCircle,
+  drawHandwrittenText,
+  drawTypewriterText,
+  inkLayer,
+} from './ink.js';
 import { drawMugshot, type AvatarImage, type MugshotOptions } from './mugshot.js';
 import {
   PALETTE,
-  drawHeaderAndFields,
-  drawPaper,
+  getHeaderStages,
+  getPaperStages,
   type CanvasContext2DLike,
+  type NamedRenderStage,
 } from './paper.js';
 import {
   drawStamps,
@@ -17,6 +25,7 @@ import {
 
 export interface DrawCardOptions extends MugshotOptions {
   fontLoader?: FontLoader;
+  yieldBetweenStages?: boolean;
 }
 
 export type WidthMeasurer = (text: string, font: string) => number;
@@ -391,14 +400,14 @@ export function computeCardLayout(
   return { textBoxes, stampBox, bailBox: BAIL_BOX };
 }
 
-function drawAcquittedExtras(ctx: CanvasContext2DLike): void {
+function drawAcquittedExtras(ctx: CanvasContext2DLike, handle: string): void {
   const x = CHARGES_LEFT;
   ctx.fillStyle = PALETTE.ink;
   ctx.font = '700 14px "Courier Prime", monospace';
-  ctx.fillText('PRIORS:', x, 324);
+  drawTypewriterText(ctx, 'PRIORS:', x, 324, hashHandle(handle, 'acq-priors'));
   ctx.fillRect(x + 76, 321, 246, 20);
 
-  ctx.fillText('ALIASES:', x, 354);
+  drawTypewriterText(ctx, 'ALIASES:', x, 354, hashHandle(handle, 'acq-aliases'));
   ctx.fillRect(x + 84, 351, 280, 20);
 }
 
@@ -414,10 +423,10 @@ function drawInsufficientEvidenceExtras(ctx: CanvasContext2DLike): void {
   ctx.restore();
 }
 
-function drawChargesAndBail(
+function getChargesAndBailStages(
   ctx: CanvasContext2DLike,
   verdict: VerdictReport,
-): void {
+): NamedRenderStage[] {
   const measure: WidthMeasurer = (text, font) => {
     ctx.save();
     ctx.font = font;
@@ -427,84 +436,8 @@ function drawChargesAndBail(
   };
 
   const layout = computeCardLayout(verdict, measure);
+  const handRng = createRng(hashHandle(verdict.handle, 'hand-accents'));
 
-  ctx.save();
-  ctx.strokeStyle = PALETTE.ink;
-  ctx.fillStyle = PALETTE.ink;
-  ctx.lineWidth = 2;
-  ctx.textAlign = 'left';
-  ctx.textBaseline = 'top';
-
-  // Charges zone: 430-1150, 194-524
-  ctx.font = '700 12.5px "Courier Prime", monospace';
-  ctx.fillText('CHARGES (PENDING):', CHARGES_LEFT, 206);
-
-  if (verdict.verdict === 'ACQUITTED') {
-    drawAcquittedExtras(ctx);
-  } else if (
-    verdict.verdict === 'INSUFFICIENT EVIDENCE' ||
-    verdict.verdict === 'RECORD SEALED'
-  ) {
-    drawInsufficientEvidenceExtras(ctx);
-  }
-
-  for (const box of layout.textBoxes) {
-    ctx.save();
-    ctx.font = box.font;
-    ctx.fillStyle =
-      box.kind === 'sting' ||
-      (box.kind === 'alibi' && box.text === 'suspiciously clean')
-        ? PALETTE.hand
-        : PALETTE.ink;
-
-    if (box.rotateDeg) {
-      ctx.translate(box.x, box.y);
-      ctx.rotate((box.rotateDeg * Math.PI) / 180);
-      box.lines.forEach((line, idx) => {
-        ctx.fillText(line, 0, idx * 16);
-      });
-    } else {
-      const lineStep = box.kind === 'receipt' ? 16 : box.kind === 'alibi' ? 18 : 22;
-      box.lines.forEach((line, idx) => {
-        ctx.fillText(line, box.x, box.y + idx * lineStep);
-      });
-    }
-    ctx.restore();
-  }
-
-  // Charges zone border: 430-1150, 194-524
-  ctx.strokeRect(
-    CHARGES_BOX.x,
-    CHARGES_BOX.y,
-    CHARGES_BOX.width,
-    CHARGES_BOX.height,
-  );
-
-  // Bail box: 430-790, 540-630
-  ctx.strokeStyle = PALETTE.ink;
-  ctx.lineWidth = 2;
-  ctx.strokeRect(BAIL_BOX.x, BAIL_BOX.y, BAIL_BOX.width, BAIL_BOX.height);
-  ctx.fillStyle = PALETTE.ink;
-  ctx.font = '700 11px "Courier Prime", monospace';
-  ctx.fillText('BAIL STATUS:', BAIL_BOX.x + 12, BAIL_BOX.y + 9);
-
-  ctx.font = '700 28px "Courier Prime", monospace';
-  ctx.fillText(`BAIL: ${verdict.bail}`, BAIL_BOX.x + 12, BAIL_BOX.y + 27, 336);
-
-  ctx.font = '400 12px "Courier Prime", monospace';
-  ctx.fillText(
-    `RECEIVED BY: ${verdict.receivedBy}`,
-    BAIL_BOX.x + 12,
-    BAIL_BOX.y + 66,
-    336,
-  );
-
-  // Intake Notes / Partial Record box: 790-1048, 540-630
-  ctx.strokeRect(790, 540, 258, 90);
-  ctx.font = '700 11px "Courier Prime", monospace';
-  ctx.fillText('INTAKE NOTES:', 802, 549);
-
-  // Preserve corporation / automaton tag in INTAKE NOTES on ACQUITTED org/bot cards
   const boxNote =
     verdict.verdict === 'ACQUITTED'
       ? verdict.accountKind === 'Organization'
@@ -514,39 +447,336 @@ function drawChargesAndBail(
           : 'no priors on file'
       : verdict.intakeNotes;
 
-  ctx.fillStyle = PALETTE.hand;
-  if (verdict.partialRecord) {
-    ctx.font = '400 26px "Reenie Beanie", cursive';
-    const partialText = 'partial record on file';
-    ctx.fillText(partialText, 802, 566);
+  const yearsMatch = !verdict.partialRecord
+    ? /^(\d+\s+yrs)\s+(.*)$/i.exec(boxNote.trim())
+    : null;
+  const circleYears = Boolean(yearsMatch && handRng() < 0.55);
+  const circleBail = !circleYears && verdict.bailAmount > 0;
 
-    const tw = Math.min(230, ctx.measureText(partialText).width);
-    ctx.strokeStyle = PALETTE.hand;
-    ctx.lineWidth = 1.2;
-    ctx.beginPath();
-    ctx.moveTo(802, 591);
-    ctx.lineTo(802 + tw, 590);
-    ctx.stroke();
+  let bailValX = BAIL_BOX.x + 12;
+  let bailValW = 0;
+  let bailMaxW = 336;
 
-    ctx.font = '400 20px "Reenie Beanie", cursive';
-    const clippedNote = fitSingleLineWithEllipsis(boxNote, 234, (s) =>
-      ctx.measureText(s).width,
-    );
-    ctx.fillText(clippedNote, 802, 598);
-  } else {
-    ctx.font = '400 24px "Reenie Beanie", cursive';
-    const noteLines = wrapTextWithWidthBudget(
-      boxNote,
-      2,
-      () => 234,
-      (s) => ctx.measureText(s).width,
-    );
-    noteLines.forEach((line, idx) => {
-      ctx.fillText(line, 802, 567 + idx * 23);
-    });
-  }
+  // 1. Labels, bold count headers, and rule boxes via 'labels' ink preset
+  const labelsStage: NamedRenderStage = {
+    name: 'charges-labels',
+    run: () =>
+      inkLayer(
+        ctx,
+        (sctx) => {
+          sctx.strokeStyle = PALETTE.ink;
+          sctx.fillStyle = PALETTE.ink;
+          sctx.lineWidth = 2;
+          sctx.textAlign = 'left';
+          sctx.textBaseline = 'top';
 
-  ctx.restore();
+          sctx.font = '700 12.5px "Courier Prime", monospace';
+          drawTypewriterText(
+            sctx,
+            'CHARGES (PENDING):',
+            CHARGES_LEFT,
+            206,
+            hashHandle(verdict.handle, 'charges-hdr'),
+          );
+
+          if (verdict.verdict === 'ACQUITTED') {
+            drawAcquittedExtras(sctx, verdict.handle);
+          } else if (
+            verdict.verdict === 'INSUFFICIENT EVIDENCE' ||
+            verdict.verdict === 'RECORD SEALED'
+          ) {
+            drawInsufficientEvidenceExtras(sctx);
+          }
+
+          layout.textBoxes.forEach((box, boxIdx) => {
+            const isLabelBox =
+              box.kind === 'header' ||
+              (box.kind === 'alibi' && box.font.startsWith('700'));
+            if (!isLabelBox) return;
+
+            sctx.font = box.font;
+            const lineStep = box.kind === 'alibi' ? 18 : 22;
+            box.lines.forEach((line, idx) => {
+              drawTypewriterText(
+                sctx,
+                line,
+                box.x,
+                box.y + idx * lineStep,
+                hashHandle(verdict.handle, `lbl-${boxIdx}-${idx}`),
+              );
+            });
+          });
+
+          sctx.strokeRect(
+            CHARGES_BOX.x,
+            CHARGES_BOX.y,
+            CHARGES_BOX.width,
+            CHARGES_BOX.height,
+          );
+
+          sctx.strokeRect(BAIL_BOX.x, BAIL_BOX.y, BAIL_BOX.width, BAIL_BOX.height);
+          sctx.font = '700 11px "Courier Prime", monospace';
+          drawTypewriterText(
+            sctx,
+            'BAIL STATUS:',
+            BAIL_BOX.x + 12,
+            BAIL_BOX.y + 9,
+            hashHandle(verdict.handle, 'bail-hdr'),
+          );
+
+          sctx.font = '700 26px "Courier Prime", monospace';
+          const bailPrefix = 'BAIL:';
+          const bailPrefixW = sctx.measureText(bailPrefix).width;
+          const bailGap = 22;
+          bailValX = BAIL_BOX.x + 12 + bailPrefixW + bailGap;
+          bailMaxW = Math.max(80, 336 - bailPrefixW - bailGap);
+          bailValW = Math.min(bailMaxW, sctx.measureText(verdict.bail).width);
+
+          drawTypewriterText(
+            sctx,
+            bailPrefix,
+            BAIL_BOX.x + 12,
+            BAIL_BOX.y + 28,
+            hashHandle(verdict.handle, 'bail-prefix'),
+          );
+          drawTypewriterText(
+            sctx,
+            verdict.bail,
+            bailValX,
+            BAIL_BOX.y + 28,
+            hashHandle(verdict.handle, 'bail-val'),
+            bailMaxW,
+          );
+
+          sctx.strokeRect(790, 540, 258, 90);
+          sctx.font = '700 11px "Courier Prime", monospace';
+          drawTypewriterText(
+            sctx,
+            'INTAKE NOTES:',
+            802,
+            549,
+            hashHandle(verdict.handle, 'intake-hdr'),
+          );
+        },
+        'labels',
+        hashHandle(verdict.handle, 'card-labels-ink'),
+        { color: PALETTE.ink },
+      ),
+  };
+
+  // 2. Receipts and body text via 'receipts' ink preset
+  const receiptsStage: NamedRenderStage = {
+    name: 'charges-receipts',
+    run: () =>
+      inkLayer(
+        ctx,
+        (sctx) => {
+          sctx.fillStyle = PALETTE.ink;
+          sctx.textAlign = 'left';
+          sctx.textBaseline = 'top';
+
+          layout.textBoxes.forEach((box, boxIdx) => {
+            const isReceiptBox =
+              box.kind === 'receipt' ||
+              (box.kind === 'alibi' &&
+                box.font.startsWith('400') &&
+                box.text !== 'suspiciously clean');
+            if (!isReceiptBox) return;
+
+            sctx.font = box.font;
+            const lineStep = box.kind === 'receipt' ? 16 : 18;
+            box.lines.forEach((line, idx) => {
+              drawTypewriterText(
+                sctx,
+                line,
+                box.x,
+                box.y + idx * lineStep,
+                hashHandle(verdict.handle, `rcpt-${boxIdx}-${idx}`),
+              );
+            });
+          });
+
+          sctx.font = '400 12px "Courier Prime", monospace';
+          drawTypewriterText(
+            sctx,
+            `RECEIVED BY: ${verdict.receivedBy}`,
+            BAIL_BOX.x + 12,
+            BAIL_BOX.y + 66,
+            hashHandle(verdict.handle, 'bail-recv'),
+            336,
+          );
+        },
+        'receipts',
+        hashHandle(verdict.handle, 'card-receipts-ink'),
+        { color: PALETTE.ink },
+      ),
+  };
+
+  // 3. Handwritten stings, intake notes, max 1 underline and max 1 padded circle per card
+  const hasPartialUnderline = verdict.partialRecord;
+  const hasAcquittedUnderline =
+    !hasPartialUnderline && verdict.verdict === 'ACQUITTED';
+  const stingCount = layout.textBoxes.filter((b) => b.kind === 'sting').length;
+  const underlineStingIndex =
+    !hasPartialUnderline && !hasAcquittedUnderline && stingCount > 0
+      ? Math.floor(handRng() * stingCount)
+      : -1;
+
+  const handwritingStage: NamedRenderStage = {
+    name: 'charges-handwriting',
+    run: () =>
+      inkLayer(
+        ctx,
+        (sctx) => {
+          sctx.fillStyle = PALETTE.hand;
+          sctx.strokeStyle = PALETTE.hand;
+          sctx.textAlign = 'left';
+          sctx.textBaseline = 'top';
+
+          let stingCounter = 0;
+          layout.textBoxes.forEach((box, boxIdx) => {
+            const isHandBox =
+              box.kind === 'sting' ||
+              (box.kind === 'alibi' && box.text === 'suspiciously clean');
+            if (!isHandBox) return;
+
+            const isCleanLine = box.text === 'suspiciously clean';
+            const shouldUnderline =
+              (hasAcquittedUnderline && isCleanLine) ||
+              (box.kind === 'sting' && stingCounter === underlineStingIndex);
+            if (box.kind === 'sting') stingCounter++;
+
+            sctx.font = box.font;
+            box.lines.forEach((line, idx) => {
+              drawHandwrittenText(
+                sctx,
+                line,
+                box.x,
+                box.y + idx * 16,
+                hashHandle(verdict.handle, `hand-${boxIdx}-${idx}`),
+                {
+                  baseRotateDeg: box.rotateDeg ?? 0,
+                  underline: shouldUnderline && idx === 0,
+                },
+              );
+            });
+          });
+
+          if (verdict.partialRecord) {
+            sctx.font = '400 26px "Reenie Beanie", cursive';
+            drawHandwrittenText(
+              sctx,
+              'partial record on file',
+              802,
+              566,
+              hashHandle(verdict.handle, 'hand-partial'),
+              { underline: true, maxWidth: 234 },
+            );
+
+            sctx.font = '400 20px "Reenie Beanie", cursive';
+            const clippedNote = fitSingleLineWithEllipsis(boxNote, 234, (s) =>
+              sctx.measureText(s).width,
+            );
+            drawHandwrittenText(
+              sctx,
+              clippedNote,
+              802,
+              598,
+              hashHandle(verdict.handle, 'hand-partial-note'),
+            );
+          } else if (circleYears && yearsMatch) {
+            const prefix = yearsMatch[1] ?? '';
+            const rest = yearsMatch[2] ?? '';
+            sctx.font = '400 23px "Reenie Beanie", cursive';
+            const prefixX = 812;
+            const line0Y = 570;
+            const prefixW = sctx.measureText(prefix).width;
+            const restX = prefixX + prefixW + 20;
+            const restLine0MaxW = Math.max(40, 1038 - restX);
+
+            drawHandwrittenText(
+              sctx,
+              prefix,
+              prefixX,
+              line0Y,
+              hashHandle(verdict.handle, 'hand-note-prefix'),
+              { baseRotateDeg: 0 },
+            );
+
+            const restLines = wrapTextWithWidthBudget(
+              rest,
+              2,
+              (li) => (li === 0 ? restLine0MaxW : 234),
+              (s) => sctx.measureText(s).width,
+            );
+            if (restLines[0]) {
+              drawHandwrittenText(
+                sctx,
+                restLines[0],
+                restX,
+                line0Y,
+                hashHandle(verdict.handle, 'hand-note-0'),
+              );
+            }
+            if (restLines[1]) {
+              drawHandwrittenText(
+                sctx,
+                restLines[1],
+                802,
+                598,
+                hashHandle(verdict.handle, 'hand-note-1'),
+              );
+            }
+
+            drawHandCircle(
+              sctx,
+              prefixX + prefixW * 0.5,
+              line0Y + 11,
+              prefixW * 0.5 + 8.5,
+              11.5,
+              hashHandle(verdict.handle, 'hand-circle-note'),
+            );
+          } else {
+            sctx.font = '400 24px "Reenie Beanie", cursive';
+            const noteLines = wrapTextWithWidthBudget(
+              boxNote,
+              2,
+              () => 234,
+              (s) => sctx.measureText(s).width,
+            );
+            noteLines.forEach((line, idx) => {
+              drawHandwrittenText(
+                sctx,
+                line,
+                802,
+                567 + idx * 23,
+                hashHandle(verdict.handle, `hand-note-${idx}`),
+              );
+            });
+          }
+
+          if (circleBail && bailValW > 0) {
+            drawHandCircle(
+              sctx,
+              bailValX + bailValW * 0.5,
+              BAIL_BOX.y + 40,
+              bailValW * 0.5 + 10.5,
+              15.5,
+              hashHandle(verdict.handle, 'hand-circle-bail'),
+            );
+          }
+        },
+        'handwriting',
+        hashHandle(verdict.handle, 'card-hand-ink'),
+        { color: PALETTE.hand },
+      ),
+  };
+
+  return [labelsStage, receiptsStage, handwritingStage];
+}
+
+function yieldToMain(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 /**
@@ -563,10 +793,53 @@ export async function draw(
     await options.fontLoader();
   }
   const safeAvatar = verdict.verdict === 'RECORD SEALED' ? null : avatar;
-  drawPaper(ctx, verdict.handle);
-  drawHeaderAndFields(ctx, verdict);
-  drawMugshot(ctx, verdict, safeAvatar, options);
-  drawChargesAndBail(ctx, verdict);
-  drawFingerprint(ctx, verdict.handle);
-  drawStamps(ctx, verdict);
+  const stages: NamedRenderStage[] = [
+    ...getPaperStages(ctx, verdict.handle),
+    ...getHeaderStages(ctx, verdict),
+    {
+      name: 'mugshot',
+      run: () => drawMugshot(ctx, verdict, safeAvatar, options),
+    },
+    ...getChargesAndBailStages(ctx, verdict),
+    {
+      name: 'fingerprint',
+      run: () => drawFingerprint(ctx, verdict.handle),
+    },
+    {
+      name: 'stamps',
+      run: () => drawStamps(ctx, verdict),
+    },
+  ];
+
+  if (!options.yieldBetweenStages) {
+    for (const stage of stages) stage.run();
+    return;
+  }
+
+  let computeMs = 0;
+  let maxStageMs = 0;
+  const stageTimings: Array<{ name: string; ms: number }> = [];
+  const perf = typeof performance !== 'undefined' ? performance : null;
+  for (let i = 0; i < stages.length; i++) {
+    const stage = stages[i]!;
+    const t0 = perf ? perf.now() : 0;
+    stage.run();
+    if (perf) {
+      const dt = perf.now() - t0;
+      computeMs += dt;
+      if (dt > maxStageMs) maxStageMs = dt;
+      stageTimings.push({ name: stage.name, ms: Number(dt.toFixed(2)) });
+    }
+    if (i < stages.length - 1) {
+      await yieldToMain();
+    }
+  }
+  const canvasHost = ctx.canvas as unknown as {
+    __lastComputeMs?: number;
+    __maxStageMs?: number;
+    __stageTimings?: Array<{ name: string; ms: number }>;
+  };
+  canvasHost.__lastComputeMs = computeMs;
+  canvasHost.__maxStageMs = maxStageMs;
+  canvasHost.__stageTimings = stageTimings;
 }

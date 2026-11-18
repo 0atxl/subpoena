@@ -9,11 +9,22 @@ import {
   computeCardLayout,
   draw,
 } from '../src/canvas/card';
+import { getFingerprintPatternType } from '../src/canvas/fingerprint';
 import { makeSealedBundle } from '../src/optout';
 import { browserFontLoader, createNodeFontLoader } from '../src/canvas/fonts';
-import { CARD_HEIGHT, CARD_WIDTH } from '../src/canvas/paper';
-import { boxesIntersect, getRotatedBoxBounds } from '../src/canvas/stamps';
-import { evaluateCharges, type VerdictReport } from '../src/engine/charges';
+import { renderMugshotViewport, type MugshotVariant } from '../src/canvas/mugshot';
+import { CARD_HEIGHT, CARD_WIDTH, drawPaper } from '../src/canvas/paper';
+import {
+  boxesIntersect,
+  getCardStampColors,
+  getRotatedBoxBounds,
+  getVerdictStampBounds,
+} from '../src/canvas/stamps';
+import {
+  evaluateCharges,
+  type VerdictKind,
+  type VerdictReport,
+} from '../src/engine/charges';
 import {
   INK_RGB,
   PRINT_RGB,
@@ -402,9 +413,144 @@ describe('cross-environment shared draw() parity', () => {
     const run1 = await renderOnce();
     const run2 = await renderOnce();
     expect(Buffer.from(run1.data).equals(Buffer.from(run2.data))).toBe(true);
+    expect(Buffer.from(run1.png).equals(Buffer.from(run2.png))).toBe(true);
 
     const encoded = await loadImage(run1.png);
     expect(encoded.width).toBe(CARD_WIDTH);
     expect(encoded.height).toBe(CARD_HEIGHT);
+  });
+});
+
+describe('Phase 3A ink pass guarantees', () => {
+  it('keeps all sheet edge pixels lighter than 35% ink across handles', () => {
+    const paperLum = 0.299 * 230 + 0.587 * 218 + 0.114 * 192;
+    const inkLum = 0.299 * 23 + 0.587 * 21 + 0.114 * 15;
+    const holes = [
+      { x: 22, y: 60 },
+      { x: 22, y: 100 },
+    ];
+
+    for (const handle of ['torvalds', 'sindresorhus', 'gaearon', 'octocat']) {
+      const c = createCanvas(CARD_WIDTH, CARD_HEIGHT);
+      const ctx = c.getContext('2d');
+      drawPaper(ctx as unknown as CanvasRenderingContext2D, handle);
+      const data = ctx.getImageData(0, 0, CARD_WIDTH, CARD_HEIGHT).data;
+
+      let maxInkPct = 0;
+      for (let y = 0; y < CARD_HEIGHT; y++) {
+        for (let x = 0; x < CARD_WIDTH; x++) {
+          const onEdge =
+            x < 44 || y < 4 || x >= CARD_WIDTH - 4 || y >= CARD_HEIGHT - 4;
+          if (!onEdge) continue;
+          const nearHole = holes.some(
+            (h) => Math.hypot(x - h.x, y - h.y) <= 11.5,
+          );
+          if (nearHole) continue;
+
+          const k = (y * CARD_WIDTH + x) * 4;
+          const lum =
+            0.299 * (data[k] ?? 230) +
+            0.587 * (data[k + 1] ?? 218) +
+            0.114 * (data[k + 2] ?? 192);
+          const inkPct = Math.max(
+            0,
+            ((paperLum - lum) / (paperLum - inkLum)) * 100,
+          );
+          if (inkPct > maxInkPct) maxInkPct = inkPct;
+        }
+      }
+      expect(maxInkPct, `edge ink too dark for ${handle}`).toBeLessThanOrEqual(
+        35,
+      );
+    }
+  });
+
+  it('uses at most 3 stamp colors per card and stays collision-free across -12..+8 deg with 3px ghost margin', () => {
+    const verdicts: VerdictKind[] = [
+      'GUILTY',
+      'WANTED',
+      'SUSPICIOUS',
+      'ACQUITTED',
+      'INSUFFICIENT EVIDENCE',
+      'RECORD SEALED',
+    ];
+    for (const v of verdicts) {
+      expect(getCardStampColors(v).length).toBeLessThanOrEqual(3);
+    }
+
+    const torvaldsLayout = computeCardLayout(
+      evaluateCharges(PRESETS.torvalds, new Date('2026-11-16T12:00:00Z')),
+    );
+    for (const angle of [-12, -9, -4, 0, 4, 8]) {
+      const box = getVerdictStampBounds(angle);
+      expect(boxesIntersect(box, torvaldsLayout.bailBox, 4)).toBe(false);
+      for (const item of torvaldsLayout.textBoxes) {
+        expect(boxesIntersect(item, box, 2)).toBe(false);
+      }
+    }
+  });
+
+  it('renders mugshot variants A, B, and C at 252x316 with warm highlights (no pure #f3efe3)', () => {
+    const verdict = evaluateCharges(
+      PRESETS.torvalds,
+      new Date('2026-11-16T12:00:00Z'),
+    );
+    const avatar = createCanvas(96, 104);
+    const actx = avatar.getContext('2d');
+    const px = actx.createImageData(96, 104);
+    px.data.set(makePhotoLikeBuffer(96, 104));
+    actx.putImageData(px, 0, 0);
+
+    const host = createCanvas(CARD_WIDTH, CARD_HEIGHT);
+    const hctx = host.getContext('2d') as unknown as CanvasRenderingContext2D;
+
+    for (const mugshotVariant of ['A', 'B', 'C'] as MugshotVariant[]) {
+      const res = renderMugshotViewport(
+        hctx,
+        verdict,
+        avatar as unknown as HTMLImageElement,
+        { mugshotVariant },
+      );
+      expect(res.surface.width).toBe(252);
+      expect(res.surface.height).toBe(316);
+      const sctx = (res.surface as unknown as ReturnType<typeof createCanvas>).getContext(
+        '2d',
+      );
+      const out = sctx.getImageData(0, 0, 252, 316).data;
+      let purePrintPixels = 0;
+      for (let i = 0; i < out.length; i += 4) {
+        expect(Number.isNaN(out[i]!)).toBe(false);
+        expect(out[i + 3]).toBe(255);
+        if (
+          out[i] === PRINT_RGB[0] &&
+          out[i + 1] === PRINT_RGB[1] &&
+          out[i + 2] === PRINT_RGB[2]
+        ) {
+          purePrintPixels++;
+        }
+      }
+      expect(purePrintPixels).toBe(0);
+    }
+  });
+
+  it('produces whorl, loop, and arch fingerprint pattern variety across 12 handles', () => {
+    const handles = [
+      'torvalds',
+      'sindresorhus',
+      'gaearon',
+      'yyx990803',
+      'octocat',
+      'dependabot[bot]',
+      'vercel',
+      'rust-lang',
+      'bryan',
+      'mitchellh',
+      'antirez',
+      'fabpot',
+    ];
+    const seen = new Set(handles.map((h) => getFingerprintPatternType(h)));
+    expect(seen.has('whorl')).toBe(true);
+    expect(seen.has('loop')).toBe(true);
+    expect(seen.has('arch')).toBe(true);
   });
 });

@@ -7,12 +7,33 @@ export {
   type LayoutTextItem,
   type WidthMeasurer,
 } from './card.js';
-export { drawFingerprint } from './fingerprint.js';
+export {
+  drawFingerprint,
+  getFingerprintPatternType,
+  type FingerprintOptions,
+  type FingerprintPattern,
+} from './fingerprint.js';
+export {
+  INK_PRESETS,
+  boxBlurAlpha,
+  drawHandCircle,
+  drawHandwrittenText,
+  drawTypewriterText,
+  drawWobblyUnderline,
+  inkLayer,
+  type InkGhostSpec,
+  type InkLayerOptions,
+  type InkPreset,
+  type InkPresetName,
+} from './ink.js';
 export {
   drawMugshot,
+  renderMugshotViewport,
   type AvatarImage,
   type FlatAvatarMode,
   type MugshotOptions,
+  type MugshotRenderResult,
+  type MugshotVariant,
 } from './mugshot.js';
 export {
   browserFontLoader,
@@ -30,9 +51,12 @@ export {
   type CanvasContext2DLike,
 } from './paper.js';
 export {
+  STAMP_COLORS,
   VERDICT_STAMP_SPEC,
   boxesIntersect,
   drawStamps,
+  getCardStampColors,
+  getSeededVerdictStampAngle,
   getVerdictStampBounds,
   type BoundingBox,
 } from './stamps.js';

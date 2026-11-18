@@ -515,3 +515,23 @@ export function hardThreshold(
 
   return out;
 }
+
+/**
+ * Photocopy tone curve: crushes blacks <= 8% to 0, clips whites >= 92% to 255,
+ * and boosts midtone contrast by 1.3x.
+ */
+export function applyPhotocopyToneCurve(luminance: Float32Array): Float32Array {
+  const n = luminance.length;
+  const out = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const u = clamp255(luminance[i] ?? 0) / 255;
+    let t = (u - 0.08) / 0.84;
+    if (t <= 0) t = 0;
+    else if (t >= 1) t = 1;
+    let c = 0.5 + (t - 0.5) * 1.3;
+    if (c <= 0) c = 0;
+    else if (c >= 1) c = 1;
+    out[i] = c * 255;
+  }
+  return out;
+}
